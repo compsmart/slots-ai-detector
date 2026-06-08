@@ -14,6 +14,7 @@ import httpx
 from playwright.sync_api import BrowserContext, Page, Response, sync_playwright
 
 from .repository import Repository
+from .sprite_sheet import is_likely_sprite_sheet
 
 _IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"}
 _GAME_ASSET_EXT = {".png", ".webp"}
@@ -61,7 +62,10 @@ def run_asset_capture(
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless)
         try:
-            context = browser.new_context(viewport={"width": 1600, "height": 900})
+            context = browser.new_context(
+                viewport={"width": 1600, "height": 900},
+                ignore_https_errors=True,
+            )
             for row in rows:
                 game_id = int(row["id"])
                 game_title = str(row["title"])
@@ -193,6 +197,8 @@ def _capture_assets_for_game(
             if asset_kind == "cover_photo":
                 nonlocal cover_captured
                 cover_captured = True
+            elif is_likely_sprite_sheet(local_path):
+                asset_kind = "sprite_sheet"
             captured_urls.add(url_key)
             captured_rows.append(
                 {

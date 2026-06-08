@@ -1,4 +1,4 @@
-import type { Bucket, GameRow, ProviderRow, Summary } from './types'
+import type { GameResult, ImageResult, Outcome, ProviderResult, ResultsSummary } from './types'
 
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url)
@@ -8,14 +8,35 @@ async function fetchJson<T>(url: string): Promise<T> {
   return response.json() as Promise<T>
 }
 
+function appendCommon(params: URLSearchParams, search: string, status: StatusFilter) {
+  if (search.trim()) params.set('search', search.trim())
+  if (status !== 'all') params.set('ai_status', status)
+}
+
+export type StatusFilter = 'all' | 'ai' | 'not_ai' | 'pending'
+
 export const api = {
-  summary: () => fetchJson<Summary>('/api/summary'),
-  providers: () => fetchJson<ProviderRow[]>('/api/providers'),
-  games: (provider: string, aiOnly: boolean) => {
-    const params = new URLSearchParams({ limit: '250' })
-    if (provider) params.set('provider', provider)
-    if (aiOnly) params.set('ai_only', 'true')
-    return fetchJson<GameRow[]>(`/api/games?${params.toString()}`)
+  summary: () => fetchJson<ResultsSummary>('/api/results/summary'),
+  providers: (search: string, status: StatusFilter) => {
+    const params = new URLSearchParams()
+    appendCommon(params, search, status)
+    return fetchJson<ProviderResult[]>(`/api/results/providers?${params.toString()}`)
   },
-  distribution: () => fetchJson<Bucket[]>('/api/confidence-distribution'),
+  games: (provider: string, search: string, status: StatusFilter) => {
+    const params = new URLSearchParams()
+    appendCommon(params, search, status)
+    if (provider) params.set('provider', provider)
+    return fetchJson<GameResult[]>(`/api/results/games?${params.toString()}`)
+  },
+  images: (provider: string, gameId: number | null, search: string, status: StatusFilter) => {
+    const params = new URLSearchParams()
+    appendCommon(params, search, status)
+    if (provider) params.set('provider', provider)
+    if (gameId !== null) params.set('game_id', String(gameId))
+    return fetchJson<ImageResult[]>(`/api/results/images?${params.toString()}`)
+  },
+}
+
+export function isAiOutcome(status: Outcome): boolean {
+  return status === 'ai_detected'
 }

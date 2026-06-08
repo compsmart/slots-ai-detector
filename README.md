@@ -18,7 +18,7 @@ If this machine cannot run ML inference, use the remote execution strategy docum
    - `python -m slot_image_detector.main assets`
    - `python -m slot_image_detector.main detect`
 3. Run API:
-   - `uvicorn api.main:app --reload`
+   - `uvicorn api.main:app --reload --port 8001`
 4. Run dashboard:
    - `cd dashboard`
    - `npm install`

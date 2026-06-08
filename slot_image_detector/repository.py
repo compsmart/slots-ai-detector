@@ -97,10 +97,23 @@ class Repository:
                 FOREIGN KEY(game_id) REFERENCES games(id)
             );
 
+            CREATE TABLE IF NOT EXISTS asset_detections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER NOT NULL,
+                model_name TEXT NOT NULL,
+                top_label TEXT NOT NULL,
+                top_score REAL NOT NULL,
+                raw_json TEXT NOT NULL,
+                detected_at TEXT NOT NULL,
+                UNIQUE(asset_id, model_name),
+                FOREIGN KEY(asset_id) REFERENCES game_assets(id) ON DELETE CASCADE
+            );
+
             CREATE INDEX IF NOT EXISTS idx_games_provider ON games(provider_slug);
             CREATE INDEX IF NOT EXISTS idx_images_status ON images(status);
             CREATE INDEX IF NOT EXISTS idx_detections_game ON detections(game_id);
             CREATE INDEX IF NOT EXISTS idx_assets_game ON game_assets(game_id);
+            CREATE INDEX IF NOT EXISTS idx_asset_detections_asset ON asset_detections(asset_id);
             CREATE INDEX IF NOT EXISTS idx_asset_capture_status ON game_asset_capture(status);
             """
         )
@@ -313,7 +326,29 @@ class Repository:
         )
         self.conn.commit()
 
-    def pending_image_rows(self, limit: int | None = None) -> list[sqlite3.Row]:
+    def pending_image_rows(
+        self,
+        limit: int | None = None,
+        max_per_provider: int | None = None,
+    ) -> list[sqlite3.Row]:
+        if max_per_provider is not None:
+            sql = (
+                "WITH ranked AS ("
+                "  SELECT g.id, g.title, g.game_slug, g.provider_slug, g.cover_url, i.status, "
+                "         ROW_NUMBER() OVER (PARTITION BY g.provider_slug ORDER BY g.id DESC) AS rn, "
+                "         MAX(g.id) OVER (PARTITION BY g.provider_slug) AS provider_max_id "
+                "  FROM images i JOIN games g ON g.id = i.game_id "
+                ") "
+                "SELECT id, title, game_slug, provider_slug, cover_url "
+                "FROM ranked WHERE rn <= ? AND status IN ('pending','failed') "
+                "ORDER BY provider_max_id DESC, provider_slug ASC, rn ASC"
+            )
+            params: list[object] = [max_per_provider]
+            if limit is not None:
+                sql += " LIMIT ?"
+                params.append(limit)
+            return list(self.conn.execute(sql, tuple(params)).fetchall())
+
         sql = (
             "SELECT g.id, g.title, g.game_slug, g.provider_slug, g.cover_url "
             "FROM images i JOIN games g ON g.id = i.game_id "
@@ -344,6 +379,80 @@ class Repository:
             WHERE game_id = ?
             """,
             (error[:2000], self._now(), game_id),
+        )
+        self.conn.commit()
+
+    def game_asset_rows(self, limit: int | None = None) -> list[sqlite3.Row]:
+        sql = (
+            "SELECT id, game_id, asset_url, local_path, asset_kind "
+            "FROM game_assets "
+            "WHERE asset_kind != 'cover_photo' "
+            "ORDER BY id DESC"
+        )
+        params: tuple[object, ...] = ()
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (limit,)
+        return list(self.conn.execute(sql, params).fetchall())
+
+    def update_game_asset_kind(self, asset_id: int, asset_kind: str) -> None:
+        self.conn.execute(
+            """
+            UPDATE game_assets
+            SET asset_kind = ?
+            WHERE id = ?
+            """,
+            (asset_kind, asset_id),
+        )
+        self.conn.commit()
+
+    def pending_asset_detection_rows(self, model_name: str, limit: int | None = None) -> list[sqlite3.Row]:
+        sql = (
+            "SELECT a.id, a.game_id, a.local_path, a.asset_kind, g.title, g.provider_slug "
+            "FROM game_assets a "
+            "JOIN games g ON g.id = a.game_id "
+            "WHERE a.asset_kind = 'in_game_asset' "
+            "AND NOT EXISTS ("
+            "  SELECT 1 FROM asset_detections d WHERE d.asset_id = a.id AND d.model_name = ?"
+            ") "
+            "ORDER BY a.id DESC"
+        )
+        params: list[object] = [model_name]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        return list(self.conn.execute(sql, tuple(params)).fetchall())
+
+    def save_asset_detection(self, asset_id: int, model_name: str, result: DetectionResult) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO asset_detections(asset_id, model_name, top_label, top_score, raw_json, detected_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(asset_id, model_name) DO UPDATE SET
+                top_label = excluded.top_label,
+                top_score = excluded.top_score,
+                raw_json = excluded.raw_json,
+                detected_at = excluded.detected_at
+            """,
+            (
+                asset_id,
+                model_name,
+                result.top_label,
+                result.top_score,
+                result.raw_json,
+                self._now(),
+            ),
+        )
+        self.conn.commit()
+
+    def mark_image_skipped(self, game_id: int, reason: str) -> None:
+        self.conn.execute(
+            """
+            UPDATE images
+            SET status = 'skipped', last_error = ?, updated_at = ?
+            WHERE game_id = ?
+            """,
+            (reason[:2000], self._now(), game_id),
         )
         self.conn.commit()
 

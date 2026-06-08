@@ -20,6 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     download = sub.add_parser("download", help="Download pending images")
     download.add_argument("--limit", type=int, default=None)
+    download.add_argument("--max-per-provider", type=int, default=None)
 
     assets = sub.add_parser("assets", help="Capture in-game assets via Playwright")
     assets.add_argument("--limit", type=int, default=None)
@@ -30,6 +31,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     detect = sub.add_parser("detect", help="Run AI detector on downloaded images")
     detect.add_argument("--limit", type=int, default=None)
+
+    detect_assets = sub.add_parser("detect-assets", help="Run AI detector on captured in-game assets")
+    detect_assets.add_argument("--limit", type=int, default=None)
+
+    sprites = sub.add_parser("tag-sprites", help="Mark captured sprite-sheet assets")
+    sprites.add_argument("--limit", type=int, default=None)
 
     all_cmd = sub.add_parser("all", help="Run crawl, download, detect")
     all_cmd.add_argument("--restart", action="store_true")
@@ -74,6 +81,7 @@ def main() -> None:
                 max_retries=settings.max_retries,
                 retry_base_delay=settings.retry_base_delay,
                 limit=args.limit,
+                max_per_provider=args.max_per_provider,
             )
             print(result)
         elif args.command == "assets":
@@ -94,6 +102,17 @@ def main() -> None:
             detector = AICoverDetector(settings.model_name)
             result = run_detection(repo=repo, detector=detector, limit=args.limit)
             print(result)
+        elif args.command == "detect-assets":
+            from .detector import AICoverDetector, run_asset_detection
+
+            detector = AICoverDetector(settings.model_name)
+            result = run_asset_detection(repo=repo, detector=detector, limit=args.limit)
+            print(result)
+        elif args.command == "tag-sprites":
+            from .detector import tag_sprite_sheet_assets
+
+            result = tag_sprite_sheet_assets(repo=repo, limit=args.limit)
+            print(result)
         elif args.command == "all":
             crawl_result = run_crawl(
                 repo,
@@ -109,6 +128,7 @@ def main() -> None:
                 max_retries=settings.max_retries,
                 retry_base_delay=settings.retry_base_delay,
                 limit=None,
+                max_per_provider=args.max_assets_per_provider if args.capture_assets else None,
             )
             asset_result = None
             if args.capture_assets:
